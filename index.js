@@ -69,7 +69,7 @@ app.get("/", (req, res) => {
 /*                             CONTACT FORM API                               */
 /* -------------------------------------------------------------------------- */
 
-app.post("/api/contact", async (req, res) => {
+app.post("/", async (req, res) => {
   try {
     const { name, email, phone, message, siteName } = req.body;
 
