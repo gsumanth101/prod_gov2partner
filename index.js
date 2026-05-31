@@ -4,28 +4,76 @@ const { google } = require("googleapis");
 
 const app = express();
 
-app.use(
-  cors({
-    origin: "*",
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
+/*
+|--------------------------------------------------------------------------
+| CORS - Allow All Origins
+|--------------------------------------------------------------------------
+*/
+app.use(cors());
 
-app.options("*", cors());
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Origin, X-Requested-With, Content-Type, Accept, Authorization"
+  );
+  res.header(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+  );
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+
+  next();
+});
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
+/*
+|--------------------------------------------------------------------------
+| Google Sheets Auth
+|--------------------------------------------------------------------------
+*/
 const auth = new google.auth.GoogleAuth({
   keyFile: "./credentials.json",
   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 });
 
-const SPREADSHEET_ID = "1untMNCZnpPhdVL-8HizNXx_wxtgkk5ovGKcNCJWGw6w";
+const SPREADSHEET_ID =
+  "1untMNCZnpPhdVL-8HizNXx_wxtgkk5ovGKcNCJWGw6w";
 
+const SHEET_NAME = "Sheet1";
+
+/*
+|--------------------------------------------------------------------------
+| Health Check
+|--------------------------------------------------------------------------
+*/
+app.get("/", (req, res) => {
+  res.json({
+    success: true,
+    message: "API Running Successfully",
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Contact Form API
+|--------------------------------------------------------------------------
+*/
 app.post("/api/contact", async (req, res) => {
   try {
     const { name, email, phone, message } = req.body;
+
+    if (!name || !email) {
+      return res.status(400).json({
+        success: false,
+        message: "Name and Email are required",
+      });
+    }
 
     const client = await auth.getClient();
 
@@ -34,74 +82,112 @@ app.post("/api/contact", async (req, res) => {
       auth: client,
     });
 
-    // Get all existing rows
-    const response = await sheets.spreadsheets.values.get({
+    /*
+    |--------------------------------------------------------------------------
+    | Check Existing Data
+    |--------------------------------------------------------------------------
+    */
+    const existingData = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: "Sheet1!A:F",
+      range: `${SHEET_NAME}!A:F`,
     });
 
-    const rows = response.data.values || [];
+    let rows = existingData.data.values || [];
 
-    // Create headers if sheet is empty
+    /*
+    |--------------------------------------------------------------------------
+    | Create Header Automatically
+    |--------------------------------------------------------------------------
+    */
     if (rows.length === 0) {
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
-        range: "Sheet1!A1:F1",
+        range: `${SHEET_NAME}!A1:F1`,
         valueInputOption: "RAW",
         requestBody: {
-          values: [[
-            "S.No",
-            "Name",
-            "Email",
-            "Phone",
-            "Message",
-            "Submitted At"
-          ]]
-        }
+          values: [
+            [
+              "S.No",
+              "Name",
+              "Email",
+              "Phone",
+              "Message",
+              "Submitted At",
+            ],
+          ],
+        },
       });
+
+      rows = [["S.No"]];
     }
 
-    // Header row is row 1, so serial starts from 1
-    const serialNo = rows.length === 0 ? 1 : rows.length;
+    /*
+    |--------------------------------------------------------------------------
+    | Serial Number
+    |--------------------------------------------------------------------------
+    */
+    const serialNo = rows.length;
 
+    /*
+    |--------------------------------------------------------------------------
+    | Save Data
+    |--------------------------------------------------------------------------
+    */
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
-      range: "Sheet1!A:F",
+      range: `${SHEET_NAME}!A:F`,
       valueInputOption: "USER_ENTERED",
+      insertDataOption: "INSERT_ROWS",
       requestBody: {
-        values: [[
-          serialNo,
-          name,
-          email,
-          phone || "",
-          message || "",
-          new Date().toLocaleString("en-IN")
-        ]]
-      }
+        values: [
+          [
+            serialNo,
+            name,
+            email,
+            phone || "",
+            message || "",
+            new Date().toLocaleString("en-IN", {
+              timeZone: "Asia/Kolkata",
+            }),
+          ],
+        ],
+      },
     });
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Form submitted successfully",
-      serialNo
+      serialNo,
     });
-
   } catch (error) {
-    console.error(error);
+    console.error("ERROR:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 });
 
-app.get("/", (req, res) => {
-  res.send("API Running");
+/*
+|--------------------------------------------------------------------------
+| Catch All Routes
+|--------------------------------------------------------------------------
+*/
+app.use("*", (req, res) => {
+  res.status(404).json({
+    success: false,
+    message: "Route not found",
+  });
 });
 
+/*
+|--------------------------------------------------------------------------
+| Start Server
+|--------------------------------------------------------------------------
+*/
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`✅ Server running on port ${PORT}`);
 });
