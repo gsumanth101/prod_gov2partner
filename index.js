@@ -1,77 +1,82 @@
 const express = require("express");
 const cors = require("cors");
+
+require("dotenv").config();
+
 const { google } = require("googleapis");
+
+const auth = new google.auth.GoogleAuth({
+  credentials: {
+    type: process.env.TYPE,
+    project_id: process.env.PROJECT_ID,
+    private_key_id: process.env.PRIVATE_KEY_ID,
+    private_key: process.env.PRIVATE_KEY.replace(/\\n/g, "\n"),
+    client_email: process.env.CLIENT_EMAIL,
+    client_id: process.env.CLIENT_ID,
+    auth_uri: process.env.AUTH_URI,
+    token_uri: process.env.TOKEN_URI,
+    auth_provider_x509_cert_url:
+      process.env.AUTH_PROVIDER_X509_CERT_URL,
+    client_x509_cert_url:
+      process.env.CLIENT_X509_CERT_URL,
+    universe_domain: process.env.UNIVERSE_DOMAIN,
+  },
+  scopes: [
+    "https://www.googleapis.com/auth/spreadsheets",
+  ],
+});
+
+const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
+const SHEET_NAME = process.env.SHEET_NAME;
 
 const app = express();
 
-/*
-|--------------------------------------------------------------------------
-| CORS - Allow All Origins
-|--------------------------------------------------------------------------
-*/
-app.use(cors());
-
-app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*");
-  res.header(
-    "Access-Control-Allow-Headers",
-    "Origin, X-Requested-With, Content-Type, Accept, Authorization"
-  );
-  res.header(
-    "Access-Control-Allow-Methods",
-    "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-  );
-
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
-  }
-
-  next();
-});
+/* -------------------------------------------------------------------------- */
+/*                                MIDDLEWARE                                  */
+/* -------------------------------------------------------------------------- */
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-/*
-|--------------------------------------------------------------------------
-| Google Sheets Auth
-|--------------------------------------------------------------------------
-*/
-const auth = new google.auth.GoogleAuth({
-  keyFile: "./credentials.json",
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-});
+app.use(
+  cors({
+    origin: "*",
+  })
+);
 
-const SPREADSHEET_ID =
-  "1untMNCZnpPhdVL-8HizNXx_wxtgkk5ovGKcNCJWGw6w";
+/* -------------------------------------------------------------------------- */
+/*                            GOOGLE SHEETS CONFIG                             */
+/* -------------------------------------------------------------------------- */
 
-const SHEET_NAME = "Sheet1";
+// const auth = new google.auth.GoogleAuth({
+//   keyFile: "./credentials.json",
+//   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+// });
 
-/*
-|--------------------------------------------------------------------------
-| Health Check
-|--------------------------------------------------------------------------
-*/
+
+/* -------------------------------------------------------------------------- */
+/*                              HEALTH CHECK                                  */
+/* -------------------------------------------------------------------------- */
+
 app.get("/", (req, res) => {
-  res.json({
+  return res.status(200).json({
     success: true,
     message: "API Running Successfully",
   });
 });
 
-/*
-|--------------------------------------------------------------------------
-| Contact Form API
-|--------------------------------------------------------------------------
-*/
+/* -------------------------------------------------------------------------- */
+/*                             CONTACT FORM API                               */
+/* -------------------------------------------------------------------------- */
+
 app.post("/api/contact", async (req, res) => {
   try {
-    const { name, email, phone, message } = req.body;
+    const { name, email, phone, message, siteName } = req.body;
 
-    if (!name || !email) {
+    if (!name || !email || !phone || !message) {
       return res.status(400).json({
         success: false,
-        message: "Name and Email are required",
+        message: "All fields are required",
       });
     }
 
@@ -82,11 +87,8 @@ app.post("/api/contact", async (req, res) => {
       auth: client,
     });
 
-    /*
-    |--------------------------------------------------------------------------
-    | Check Existing Data
-    |--------------------------------------------------------------------------
-    */
+    /* ----------------------------- Get Existing ---------------------------- */
+
     const existingData = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
       range: `${SHEET_NAME}!A:F`,
@@ -94,15 +96,12 @@ app.post("/api/contact", async (req, res) => {
 
     let rows = existingData.data.values || [];
 
-    /*
-    |--------------------------------------------------------------------------
-    | Create Header Automatically
-    |--------------------------------------------------------------------------
-    */
+    /* ----------------------------- Create Header --------------------------- */
+
     if (rows.length === 0) {
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
-        range: `${SHEET_NAME}!A1:F1`,
+        range: `${SHEET_NAME}!A1:G1`,
         valueInputOption: "RAW",
         requestBody: {
           values: [
@@ -112,30 +111,35 @@ app.post("/api/contact", async (req, res) => {
               "Email",
               "Phone",
               "Message",
+              "siteName",
               "Submitted At",
             ],
           ],
         },
       });
 
-      rows = [["S.No"]];
+      rows = [
+        [
+          "S.No",
+          "Name",
+          "Email",
+          "Phone",
+          "Message",
+          "siteName",
+          "Submitted At",
+        ],
+      ];
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Serial Number
-    |--------------------------------------------------------------------------
-    */
+    /* ------------------------------ Serial No ----------------------------- */
+
     const serialNo = rows.length;
 
-    /*
-    |--------------------------------------------------------------------------
-    | Save Data
-    |--------------------------------------------------------------------------
-    */
+    /* ----------------------------- Insert Row ----------------------------- */
+
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_NAME}!A:F`,
+      range: `${SHEET_NAME}!A:G`,
       valueInputOption: "USER_ENTERED",
       insertDataOption: "INSERT_ROWS",
       requestBody: {
@@ -146,6 +150,7 @@ app.post("/api/contact", async (req, res) => {
             email,
             phone || "",
             message || "",
+            siteName || "",
             new Date().toLocaleString("en-IN", {
               timeZone: "Asia/Kolkata",
             }),
@@ -160,34 +165,32 @@ app.post("/api/contact", async (req, res) => {
       serialNo,
     });
   } catch (error) {
-    console.error("ERROR:", error);
+    console.error("Google Sheet Error:", error);
 
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message: error.message || "Internal Server Error",
     });
   }
 });
 
-/*
-|--------------------------------------------------------------------------
-| Catch All Routes
-|--------------------------------------------------------------------------
-*/
-app.use("*", (req, res) => {
-  res.status(404).json({
+/* -------------------------------------------------------------------------- */
+/*                               404 HANDLER                                  */
+/* -------------------------------------------------------------------------- */
+
+app.use((req, res) => {
+  return res.status(404).json({
     success: false,
     message: "Route not found",
   });
 });
 
-/*
-|--------------------------------------------------------------------------
-| Start Server
-|--------------------------------------------------------------------------
-*/
+/* -------------------------------------------------------------------------- */
+/*                              START SERVER                                  */
+/* -------------------------------------------------------------------------- */
+
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ Server running on port ${PORT}`);
+  console.log(`Server running on http://localhost:${PORT}`);
 });
